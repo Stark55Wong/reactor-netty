@@ -54,6 +54,8 @@ public final class ProxyProvider {
 
 	private static final Supplier<? extends HttpHeaders> NO_HTTP_HEADERS = () -> null;
 
+	private static final LoggingHandler LOGGING_HANDLER = new LoggingHandler("reactor.netty.proxy");
+
 	final String username;
 	final Function<? super String, ? extends String> password;
 	final Supplier<? extends InetSocketAddress> address;
@@ -178,9 +180,7 @@ public final class ProxyProvider {
 
 		if (channel.pipeline()
 		           .get(NettyPipeline.LoggingHandler) != null) {
-			pipeline.addBefore(NettyPipeline.ProxyHandler,
-					NettyPipeline.ProxyLoggingHandler,
-					new LoggingHandler("reactor.netty.proxy"));
+			pipeline.addBefore(NettyPipeline.ProxyHandler, NettyPipeline.ProxyLoggingHandler, LOGGING_HANDLER);
 		}
 	}
 

@@ -57,23 +57,7 @@ public abstract class TransportClient<T extends TransportClient<T, CONF>,
 
 		ConnectionObserver observer = config.defaultConnectionObserver().then(config.observer);
 
-		AddressResolverGroup<?> resolver;
-		if (config.metricsRecorder != null) {
-			resolver = new AddressResolverGroupMetrics(
-					(AddressResolverGroup<SocketAddress>) config.resolver,
-					Objects.requireNonNull(config.metricsRecorder.get(), "Metrics recorder supplier returned null"));
-
-			ByteBufAllocator alloc = (ByteBufAllocator) config.options.get(ChannelOption.ALLOCATOR);
-			if (alloc instanceof PooledByteBufAllocator) {
-				ByteBufAllocatorMetrics.INSTANCE.registerMetrics("pooled", ((PooledByteBufAllocator) alloc).metric());
-			}
-			else if (alloc instanceof UnpooledByteBufAllocator) {
-				ByteBufAllocatorMetrics.INSTANCE.registerMetrics("unpooled", ((UnpooledByteBufAllocator) alloc).metric());
-			}
-		}
-		else {
-			resolver = config.resolver;
-		}
+		AddressResolverGroup<?> resolver = config._resolver();
 
 		Mono<? extends Connection> mono = config.connectionProvider()
 		                                        .acquire(config, observer, config.remoteAddress, resolver);

@@ -23,12 +23,10 @@ import java.util.function.Consumer;
 import java.util.function.Function;
 import javax.annotation.Nullable;
 
-import io.netty.bootstrap.Bootstrap;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufAllocator;
 import io.netty.channel.ChannelOption;
 import org.reactivestreams.Publisher;
-import reactor.core.Exceptions;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.netty.ByteBufFlux;
@@ -36,40 +34,43 @@ import reactor.netty.ByteBufMono;
 import reactor.netty.Connection;
 import reactor.netty.NettyOutbound;
 import reactor.netty.channel.ChannelOperations;
-import reactor.netty.tcp.TcpClient;
 
 /**
  * @author Stephane Maldini
+ * @author Violeta Georgieva
  */
-final class HttpClientFinalizer extends HttpClient implements HttpClient.RequestSender {
+final class HttpClientFinalizer implements HttpClient.RequestSender {
 
-	final TcpClient cachedConfiguration;
+	final HttpClientConnect httpClient;
 
-	HttpClientFinalizer(TcpClient parent) {
-		this.cachedConfiguration = parent;
+	HttpClientFinalizer(HttpClientConnect httpClient) {
+		this.httpClient = httpClient;
 	}
 
 	// UriConfiguration methods
 
 	@Override
-	public HttpClient.RequestSender uri(String uri) {
-		return new HttpClientFinalizer(cachedConfiguration.bootstrap(b -> HttpClientConfiguration.uri(b, uri)));
+	public HttpClient.RequestSender uri(Mono<String> uri) {
+		Objects.requireNonNull(uri, "uri");
+		HttpClient dup = httpClient.duplicate();
+		dup.configuration().deferredConf(client -> uri.map(s -> {
+			client.config.uri = s;
+			return client;
+		}));
+		return new HttpClientFinalizer((HttpClientConnect) dup);
 	}
 
 	@Override
-	public HttpClient.RequestSender uri(Mono<String> uri) {
-		return new HttpClientFinalizer(cachedConfiguration.bootstrap(b -> HttpClientConfiguration.deferredConf(b, conf -> uri.map(conf::uri))));
+	public HttpClient.RequestSender uri(String uri) {
+		Objects.requireNonNull(uri, "uri");
+		HttpClient dup = httpClient.duplicate();
+		dup.configuration().uri = uri;
+		return new HttpClientFinalizer((HttpClientConnect) dup);
 	}
 
 	// ResponseReceiver methods
 
-	@SuppressWarnings("unchecked")
-	Mono<HttpClientOperations> connect() {
-		return (Mono<HttpClientOperations>)cachedConfiguration.connect();
-	}
-
 	@Override
-	@SuppressWarnings("unchecked")
 	public Mono<HttpClientResponse> response() {
 		return connect().map(RESPONSE_ONLY);
 	}
@@ -77,7 +78,7 @@ final class HttpClientFinalizer extends HttpClient implements HttpClient.Request
 	@Override
 	public <V> Flux<V> response(BiFunction<? super HttpClientResponse, ? super ByteBufFlux, ? extends Publisher<V>> receiver) {
 		return connect().flatMapMany(resp -> Flux.from(receiver.apply(resp, resp.receive()))
-		                                          .doFinally(s -> discard(resp)));
+		                                         .doFinally(s -> discard(resp)));
 	}
 
 	@Override
@@ -87,67 +88,59 @@ final class HttpClientFinalizer extends HttpClient implements HttpClient.Request
 
 	@Override
 	public ByteBufFlux responseContent() {
-		return content(cachedConfiguration, contentReceiver);
+		return content(httpClient);
 	}
 
 	@Override
 	public <V> Mono<V> responseSingle(BiFunction<? super HttpClientResponse, ? super ByteBufMono, ? extends Mono<V>> receiver) {
-		return connect().flatMap(resp -> receiver.apply(resp,
-				resp.receive()
-				    .aggregate()).doFinally(s -> discard(resp)));
+		return connect().flatMap(resp -> receiver.apply(resp, resp.receive().aggregate())
+		                                         .doFinally(s -> discard(resp)));
 	}
 
-
-
 	// RequestSender methods
+
+	@Override
+	public HttpClientFinalizer send(
+			BiFunction<? super HttpClientRequest, ? super NettyOutbound, ? extends Publisher<Void>> sender) {
+		Objects.requireNonNull(sender, "requestBody");
+		HttpClient dup = httpClient.duplicate();
+		dup.configuration().body = sender;
+		return new HttpClientFinalizer((HttpClientConnect) dup);
+	}
 
 	@Override
 	public HttpClientFinalizer send(Publisher<? extends ByteBuf> requestBody) {
 		Objects.requireNonNull(requestBody, "requestBody");
 		return send((req, out) -> out.send(requestBody));
 	}
-	@Override
-	public HttpClientFinalizer send(BiFunction<? super HttpClientRequest, ?
-			super NettyOutbound, ? extends Publisher<Void>> sender) {
-		Objects.requireNonNull(sender, "requestBody");
-		return new HttpClientFinalizer(cachedConfiguration.bootstrap(b -> HttpClientConfiguration.body(b, sender)));
-	}
 
 	@Override
 	public HttpClientFinalizer sendForm(BiConsumer<? super HttpClientRequest, HttpClientForm> formCallback, @Nullable Consumer<Flux<Long>> progress) {
 		Objects.requireNonNull(formCallback, "formCallback");
 		return send((req, out) -> {
-			@SuppressWarnings("unchecked")
 			HttpClientOperations ops = (HttpClientOperations) out;
 			return new HttpClientOperations.SendForm(ops, formCallback, progress);
 		});
 	}
 
-	static ByteBufFlux content(TcpClient cachedConfiguration, Function<ChannelOperations<?, ?>, Publisher<ByteBuf>> contentReceiver) {
-		Bootstrap b;
-		try {
-			b = cachedConfiguration.configure();
+	@SuppressWarnings("unchecked")
+	Mono<HttpClientOperations> connect() {
+		return (Mono<HttpClientOperations>) httpClient.connect();
+	}
+
+	static ByteBufFlux content(HttpClient httpClient) {
+		ByteBufAllocator alloc = (ByteBufAllocator) httpClient.configuration()
+		                                                      .options()
+		                                                      .get(ChannelOption.ALLOCATOR);
+		if (alloc == null) {
+			alloc = ByteBufAllocator.DEFAULT;
 		}
-		catch (Throwable t) {
-			Exceptions.throwIfJvmFatal(t);
-			return ByteBufFlux.fromInbound(Mono.error(t));
-		}
-		@SuppressWarnings("unchecked")
-		ByteBufAllocator alloc = (ByteBufAllocator) b.config()
-		                                             .options()
-		                                             .getOrDefault(ChannelOption.ALLOCATOR, ByteBufAllocator.DEFAULT);
 
 		@SuppressWarnings("unchecked")
-		Mono<ChannelOperations<?, ?>> connector = (Mono<ChannelOperations<?, ?>>) cachedConfiguration.connect(b);
+		Mono<ChannelOperations<?, ?>> connector = (Mono<ChannelOperations<?, ?>>) httpClient.connect();
 
 		return ByteBufFlux.fromInbound(connector.flatMapMany(contentReceiver), alloc);
 	}
-
-	static final Function<HttpClientOperations, HttpClientResponse> RESPONSE_ONLY = ops -> {
-		//defer the dispose to avoid over disposing on receive
-		discard(ops);
-		return ops;
-	};
 
 	static void discard(HttpClientOperations c) {
 		if (!c.isInboundDisposed()) {
@@ -156,5 +149,11 @@ final class HttpClientFinalizer extends HttpClient implements HttpClient.Request
 	}
 
 	static final Function<ChannelOperations<?, ?>, Publisher<ByteBuf>> contentReceiver = ChannelOperations::receive;
+
+	static final Function<HttpClientOperations, HttpClientResponse> RESPONSE_ONLY = ops -> {
+		//defer the dispose to avoid over disposing on receive
+		discard(ops);
+		return ops;
+	};
 }
 

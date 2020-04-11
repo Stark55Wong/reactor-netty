@@ -26,53 +26,67 @@ import reactor.core.publisher.Mono;
 import reactor.netty.ByteBufFlux;
 import reactor.netty.http.websocket.WebsocketInbound;
 import reactor.netty.http.websocket.WebsocketOutbound;
-import reactor.netty.tcp.TcpClient;
 
 /**
  * @author Stephane Maldini
+ * @author Violeta Georgieva
  */
-final class WebsocketFinalizer extends HttpClient implements HttpClient.WebsocketSender {
+final class WebsocketFinalizer implements HttpClient.WebsocketSender {
 
-	final TcpClient cachedConfiguration;
+	final HttpClientConnect httpClient;
 
-	WebsocketFinalizer(TcpClient parent) {
-		this.cachedConfiguration = parent;
+	WebsocketFinalizer(HttpClientConnect httpClient) {
+		this.httpClient = httpClient;
 	}
 
 	// UriConfiguration methods
 
 	@Override
-	public WebsocketSender uri(String uri) {
-		return new WebsocketFinalizer(cachedConfiguration.bootstrap(b -> HttpClientConfiguration.uri(b, uri)));
+	public HttpClient.WebsocketSender uri(Mono<String> uri) {
+		Objects.requireNonNull(uri, "uri");
+		HttpClient dup = httpClient.duplicate();
+		dup.configuration().deferredConf(client -> uri.map(s -> {
+			client.config.uri = s;
+			return client;
+		}));
+		return new WebsocketFinalizer((HttpClientConnect) dup);
 	}
 
 	@Override
-	public WebsocketSender uri(Mono<String> uri) {
-		return new WebsocketFinalizer(cachedConfiguration.bootstrap(b -> HttpClientConfiguration.deferredConf(b, conf -> uri.map(conf::uri))));
+	public HttpClient.WebsocketSender uri(String uri) {
+		Objects.requireNonNull(uri, "uri");
+		HttpClient dup = httpClient.duplicate();
+		dup.configuration().uri = uri;
+		return new WebsocketFinalizer((HttpClientConnect) dup);
 	}
 
 	// WebsocketSender methods
+
 	@Override
 	public WebsocketFinalizer send(Function<? super HttpClientRequest, ? extends Publisher<Void>> sender) {
 		Objects.requireNonNull(sender, "requestBody");
-		return new WebsocketFinalizer(cachedConfiguration.bootstrap(b -> HttpClientConfiguration.body(b, (req, out) -> sender.apply(req))));
+		HttpClient dup = httpClient.duplicate();
+		dup.configuration().body = (req, out) -> sender.apply(req);
+		return new WebsocketFinalizer((HttpClientConnect) dup);
 	}
+
+	// WebsocketReceiver methods
 
 	@Override
 	@SuppressWarnings("unchecked")
 	public Mono<WebsocketClientOperations> connect() {
-		return (Mono<WebsocketClientOperations>)cachedConfiguration.connect();
-	}
-
-	@Override
-	public ByteBufFlux receive() {
-		return HttpClientFinalizer.content(cachedConfiguration, HttpClientFinalizer.contentReceiver);
+		return (Mono<WebsocketClientOperations>) httpClient.connect();
 	}
 
 	@Override
 	public <V> Flux<V> handle(BiFunction<? super WebsocketInbound, ? super WebsocketOutbound, ? extends Publisher<V>> receiver) {
 		return connect().flatMapMany(c -> Flux.from(receiver.apply(c, c))
 		                                      .doFinally(s -> HttpClientFinalizer.discard(c)));
+	}
+
+	@Override
+	public ByteBufFlux receive() {
+		return HttpClientFinalizer.content(httpClient);
 	}
 }
 

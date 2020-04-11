@@ -21,6 +21,9 @@ import java.util.Objects;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
+import io.netty.buffer.ByteBufAllocator;
+import io.netty.buffer.PooledByteBufAllocator;
+import io.netty.buffer.UnpooledByteBufAllocator;
 import io.netty.channel.ChannelOption;
 import io.netty.channel.group.ChannelGroup;
 import io.netty.resolver.AddressResolverGroup;
@@ -44,7 +47,7 @@ public abstract class TransportClientConfig<CONF extends TransportConfig> extend
 
 	@Override
 	public int channelHash() {
-		return Objects.hash(super.channelHash(), doOnConnected, doOnDisconnected, proxyProvider, resolver);
+		return Objects.hash(super.channelHash(), proxyProvider, resolver);
 	}
 
 	/**
@@ -170,6 +173,26 @@ public abstract class TransportClientConfig<CONF extends TransportConfig> extend
 				proxyProvider.addProxyHandler(channel);
 			}
 		};
+	}
+
+	@SuppressWarnings("unchecked")
+	protected AddressResolverGroup<?> _resolver() {
+		if (metricsRecorder != null) {
+			ByteBufAllocator alloc = (ByteBufAllocator) options.get(ChannelOption.ALLOCATOR);
+			if (alloc instanceof PooledByteBufAllocator) {
+				ByteBufAllocatorMetrics.INSTANCE.registerMetrics("pooled", ((PooledByteBufAllocator) alloc).metric());
+			}
+			else if (alloc instanceof UnpooledByteBufAllocator) {
+				ByteBufAllocatorMetrics.INSTANCE.registerMetrics("unpooled", ((UnpooledByteBufAllocator) alloc).metric());
+			}
+
+			return new AddressResolverGroupMetrics(
+					(AddressResolverGroup<SocketAddress>) resolver,
+					Objects.requireNonNull(metricsRecorder.get(), "Metrics recorder supplier returned null"));
+		}
+		else {
+			return resolver;
+		}
 	}
 
 	static final class TransportClientDoOn implements ConnectionObserver {
