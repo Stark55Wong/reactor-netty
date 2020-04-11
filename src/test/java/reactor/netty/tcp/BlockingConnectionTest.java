@@ -21,8 +21,6 @@ import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 
-import io.netty.bootstrap.Bootstrap;
-import io.netty.bootstrap.ServerBootstrap;
 import io.netty.channel.Channel;
 import io.netty.channel.embedded.EmbeddedChannel;
 import org.junit.Test;
@@ -153,23 +151,45 @@ public class BlockingConnectionTest {
 
 	@Test
 	public void testTimeoutOnStart() {
-		TcpClient neverStart = new TcpClient(){
+		TcpClient neverStart = new TcpClient() {
+
 			@Override
-			public Mono<? extends Connection> connect(Bootstrap b) {
+			public TcpClientConfig configuration() {
+				return null;
+			}
+
+			@Override
+			protected TcpClient duplicate() {
+				return null;
+			}
+
+			@Override
+			public Mono<? extends Connection> connect() {
 				return Mono.never();
 			}
 		};
 
 		assertThatExceptionOfType(IllegalStateException.class)
 				.isThrownBy(() -> neverStart.connectNow(Duration.ofMillis(100)))
-				.withMessage("TcpClient couldn't be started within 100ms");
+				.withMessage(" couldn't be started within 100ms");
 	}
 
 	@Test
 	public void testTimeoutOnStop() {
-		Connection c = new TcpClient(){
+		Connection c = new TcpClient() {
+
 			@Override
-			public Mono<? extends Connection> connect(Bootstrap b) {
+			public TcpClientConfig configuration() {
+				return null;
+			}
+
+			@Override
+			protected TcpClient duplicate() {
+				return null;
+			}
+
+			@Override
+			public Mono<? extends Connection> connect() {
 				return Mono.just(NEVER_STOP_CONTEXT);
 			}
 		}.connectNow();
@@ -181,15 +201,21 @@ public class BlockingConnectionTest {
 
 	@Test
 	public void getContextAddressAndHost() {
-		DisposableServer c = new TcpServer(){
+		DisposableServer c = new TcpServer() {
+
 			@Override
-			public Mono<? extends DisposableServer> bind(ServerBootstrap b) {
-				return Mono.just(NEVER_STOP_SERVER);
+			public TcpServerConfig configuration() {
+				return null;
 			}
 
 			@Override
-			public ServerBootstrap configure() {
-				return TcpServerBind.INSTANCE.createServerBootstrap();
+			protected TcpServer duplicate() {
+				return null;
+			}
+
+			@Override
+			public Mono<? extends DisposableServer> bind() {
+				return Mono.just(NEVER_STOP_SERVER);
 			}
 		}.bindNow();
 

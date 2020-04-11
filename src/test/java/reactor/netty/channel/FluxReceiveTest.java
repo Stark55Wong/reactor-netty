@@ -99,9 +99,8 @@ public class FluxReceiveTest {
 				                     routes.get("/forward", (req, res) ->
 				                           HttpClient.create()
 				                                     .port(server1.address().getPort())
-				                                     .tcpConfiguration(tcpClient ->
-				                                         tcpClient.doOnConnected(c ->
-				                                             c.addHandlerFirst(new ReadTimeoutHandler(50, TimeUnit.MILLISECONDS))))
+				                                     .doOnConnected(c ->
+				                                             c.addHandlerFirst(new ReadTimeoutHandler(50, TimeUnit.MILLISECONDS)))
 				                                     .get()
 				                                     .uri("/target")
 				                                     .responseContent()

@@ -17,8 +17,10 @@ package reactor.netty.resources;
 
 import java.io.IOException;
 import java.net.InetSocketAddress;
+import java.net.SocketAddress;
 import java.security.cert.CertificateException;
 import java.time.Duration;
+import java.util.Collections;
 import java.util.List;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
@@ -31,10 +33,14 @@ import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Supplier;
 
-import io.netty.bootstrap.Bootstrap;
+import io.netty.channel.Channel;
+import io.netty.channel.ChannelFactory;
+import io.netty.channel.EventLoopGroup;
 import io.netty.channel.nio.NioEventLoopGroup;
 import io.netty.channel.socket.nio.NioSocketChannel;
+import io.netty.handler.logging.LoggingHandler;
 import io.netty.handler.ssl.SslContextBuilder;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 import io.netty.handler.codec.http.HttpHeaderNames;
@@ -49,12 +55,14 @@ import reactor.netty.Connection;
 import reactor.netty.ConnectionObserver;
 import reactor.netty.DisposableServer;
 import reactor.netty.SocketUtils;
+import reactor.netty.channel.ChannelMetricsRecorder;
 import reactor.netty.http.client.HttpClient;
 import reactor.netty.http.server.HttpServer;
 import reactor.netty.resources.PooledConnectionProvider.PooledConnection;
 import reactor.netty.tcp.TcpClient;
 import reactor.netty.tcp.TcpClientTests;
 import reactor.netty.tcp.TcpServer;
+import reactor.netty.transport.TransportClientConfig;
 import reactor.pool.InstrumentedPool;
 import reactor.pool.PoolAcquirePendingLimitException;
 import reactor.pool.PooledRef;
@@ -134,14 +142,41 @@ public class PooledConnectionProviderTest {
 			final InetSocketAddress address = InetSocketAddress.createUnresolved("localhost", echoServerPort);
 			ConnectionProvider pool = ConnectionProvider.create("fixedPoolTwoAcquire", 2);
 
-			Bootstrap bootstrap = new Bootstrap().remoteAddress(address)
-			                                     .channelFactory(NioSocketChannel::new)
-			                                     .group(new NioEventLoopGroup(2));
+			Supplier<? extends SocketAddress> remoteAddress = () -> address;
+			ConnectionObserver observer = ConnectionObserver.emptyListener();
+			EventLoopGroup group = new NioEventLoopGroup(2);
+			TransportClientConfig<?> config = new TransportClientConfig(pool, Collections.emptyMap(), remoteAddress) {
+
+				@Override
+				protected ChannelFactory<? extends Channel> connectionFactory(EventLoopGroup elg) {
+					return NioSocketChannel::new;
+				}
+
+				@Override
+				protected LoggingHandler defaultLoggingHandler() {
+					return null;
+				}
+
+				@Override
+				protected LoopResources defaultLoopResources() {
+					return preferNative -> group;
+				}
+
+				@Override
+				protected ChannelMetricsRecorder defaultMetricsRecorder() {
+					return null;
+				}
+
+				@Override
+				protected EventLoopGroup eventLoopGroup() {
+					return group;
+				}
+			};
 
 			//fail a couple
-			StepVerifier.create(pool.acquire(bootstrap))
+			StepVerifier.create(pool.acquire(config, observer, remoteAddress, config.resolver()))
 			            .verifyErrorMatches(msg -> msg.getMessage().contains("Connection refused"));
-			StepVerifier.create(pool.acquire(bootstrap))
+			StepVerifier.create(pool.acquire(config, observer, remoteAddress, config.resolver()))
 			            .verifyErrorMatches(msg -> msg.getMessage().contains("Connection refused"));
 
 			//start the echo server
@@ -149,10 +184,10 @@ public class PooledConnectionProviderTest {
 			Thread.sleep(100);
 
 			//acquire 2
-			final PooledConnection c1 = (PooledConnection) pool.acquire(bootstrap)
+			final PooledConnection c1 = (PooledConnection) pool.acquire(config, observer, remoteAddress, config.resolver())
 			                                                   .block(Duration.ofSeconds(30));
 			assertThat(c1).isNotNull();
-			final PooledConnection c2 = (PooledConnection) pool.acquire(bootstrap)
+			final PooledConnection c2 = (PooledConnection) pool.acquire(config, observer, remoteAddress, config.resolver())
 			                                                   .block(Duration.ofSeconds(30));
 			assertThat(c2).isNotNull();
 
@@ -160,7 +195,7 @@ public class PooledConnectionProviderTest {
 			c2.disposeNow();
 
 
-			final PooledConnection c3 = (PooledConnection) pool.acquire(bootstrap)
+			final PooledConnection c3 = (PooledConnection) pool.acquire(config, observer, remoteAddress, config.resolver())
 			                                                   .block(Duration.ofSeconds(30));
 			assertThat(c3).isNotNull();
 
@@ -170,7 +205,7 @@ public class PooledConnectionProviderTest {
 					.MILLISECONDS);
 
 
-			final PooledConnection c4 = (PooledConnection) pool.acquire(bootstrap)
+			final PooledConnection c4 = (PooledConnection) pool.acquire(config, observer, remoteAddress, config.resolver())
 			                                                   .block(Duration.ofSeconds(30));
 			assertThat(c4).isNotNull();
 
@@ -407,7 +442,7 @@ public class PooledConnectionProviderTest {
 				                                             .build();
 		AtomicReference<InstrumentedPool<PooledConnection>> pool1 = new AtomicReference<>();
 		HttpClient.create(provider)
-		          .tcpConfiguration(tcpClient -> tcpClient.doOnConnected(conn -> {
+		          .doOnConnected(conn -> {
 		              ConcurrentMap<PooledConnectionProvider.PoolKey, InstrumentedPool<PooledConnection>> pools =
 		                  provider.channelPools;
 		              for (InstrumentedPool<PooledConnection> pool : pools.values()) {
@@ -416,7 +451,7 @@ public class PooledConnectionProviderTest {
 		                      return;
 		                  }
 		              }
-		          }))
+		          })
 		          .wiretap(true)
 		          .get()
 		          .uri("http://localhost:" + server.port() +"/")
@@ -428,7 +463,7 @@ public class PooledConnectionProviderTest {
 
 		AtomicReference<InstrumentedPool<PooledConnection>> pool2 = new AtomicReference<>();
 		HttpClient.create(provider)
-		          .tcpConfiguration(tcpClient -> tcpClient.doOnConnected(conn -> {
+		          .doOnConnected(conn -> {
 		              ConcurrentMap<PooledConnectionProvider.PoolKey, InstrumentedPool<PooledConnection>> pools =
 		                  provider.channelPools;
 		              for (InstrumentedPool<PooledConnection> pool : pools.values()) {
@@ -437,7 +472,7 @@ public class PooledConnectionProviderTest {
 		                      return;
 		                  }
 		              }
-		          }))
+		          })
 		          .wiretap(true)
 		          .get()
 		          .uri("https://example.com/")
@@ -469,8 +504,7 @@ public class PooledConnectionProviderTest {
 				HttpClient.create(provider)
 				          .port(server.port())
 				          .wiretap(true)
-				          .tcpConfiguration(tcpClient ->
-				              tcpClient.doOnConnected(conn -> conn.channel().closeFuture().addListener(f -> latch.countDown())));
+				          .doOnConnected(conn -> conn.channel().closeFuture().addListener(f -> latch.countDown()));
 
 		client.get()
 		      .uri("/1")
