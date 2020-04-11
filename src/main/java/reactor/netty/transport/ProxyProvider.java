@@ -39,7 +39,6 @@ import io.netty.handler.proxy.Socks5ProxyHandler;
 import reactor.netty.ConnectionObserver;
 import reactor.netty.NettyPipeline;
 import reactor.netty.channel.BootstrapHandlers;
-import reactor.netty.tcp.TcpUtils;
 
 /**
  * Proxy configuration
@@ -173,11 +172,7 @@ public final class ProxyProvider {
 	 * @return true if of type {@link InetSocketAddress} and hostname candidate to proxy
 	 */
 	public boolean shouldProxy(SocketAddress address) {
-		SocketAddress addr = address;
-		if (address instanceof TcpUtils.SocketAddressSupplier) {
-			addr = ((TcpUtils.SocketAddressSupplier) address).get();
-		}
-		return addr instanceof InetSocketAddress && shouldProxy(((InetSocketAddress) addr).getHostString());
+		return address instanceof InetSocketAddress && shouldProxy(((InetSocketAddress) address).getHostString());
 	}
 
 	/**
@@ -196,6 +191,18 @@ public final class ProxyProvider {
 	 */
 	public enum Proxy {
 		HTTP, SOCKS4, SOCKS5
+	}
+
+	public void addProxyHandler(Channel channel) {
+		ChannelPipeline pipeline = channel.pipeline();
+		pipeline.addFirst(NettyPipeline.ProxyHandler, newProxyHandler());
+
+		if (channel.pipeline()
+		           .get(NettyPipeline.LoggingHandler) != null) {
+			pipeline.addBefore(NettyPipeline.ProxyHandler,
+					NettyPipeline.ProxyLoggingHandler,
+					new LoggingHandler("reactor.netty.proxy"));
+		}
 	}
 
 	@Override

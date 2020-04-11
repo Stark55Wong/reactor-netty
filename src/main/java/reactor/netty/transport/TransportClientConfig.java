@@ -28,7 +28,6 @@ import io.netty.resolver.DefaultAddressResolverGroup;
 import reactor.netty.ChannelPipelineConfigurer;
 import reactor.netty.Connection;
 import reactor.netty.ConnectionObserver;
-import reactor.netty.ReactorNetty;
 import reactor.netty.resources.ConnectionProvider;
 
 import javax.annotation.Nullable;
@@ -83,6 +82,25 @@ public abstract class TransportClientConfig<CONF extends TransportConfig> extend
 	}
 
 	/**
+	 * Return true if that {@link TransportClientConfig} is configured with a proxy
+	 *
+	 * @return true if that {@link TransportClientConfig} is configured with a proxy
+	 */
+	public final boolean hasProxy() {
+		return proxyProvider != null;
+	}
+
+	/**
+	 * Return the {@link ProxyProvider} if any or null
+	 *
+	 * @return the {@link ProxyProvider} if any or null
+	 */
+	@Nullable
+	public final ProxyProvider proxyProvider() {
+		return proxyProvider;
+	}
+
+	/**
 	 * Return the remote configured {@link SocketAddress}
 	 *
 	 * @return the remote configured {@link SocketAddress}
@@ -108,6 +126,7 @@ public abstract class TransportClientConfig<CONF extends TransportConfig> extend
 	Consumer<? super CONF>            doOnConnect;
 	Consumer<? super Connection>      doOnConnected;
 	Consumer<? super Connection>      doOnDisconnected;
+	ProxyProvider                     proxyProvider;
 	Supplier<? extends SocketAddress> remoteAddress;
 	AddressResolverGroup<?>           resolver;
 
@@ -125,6 +144,7 @@ public abstract class TransportClientConfig<CONF extends TransportConfig> extend
 		this.doOnConnect = parent.doOnConnect;
 		this.doOnConnected = parent.doOnConnected;
 		this.doOnDisconnected = parent.doOnDisconnected;
+		this.proxyProvider = parent.proxyProvider;
 		this.remoteAddress = parent.remoteAddress;
 		this.resolver = parent.resolver;
 	}
@@ -139,7 +159,12 @@ public abstract class TransportClientConfig<CONF extends TransportConfig> extend
 
 	@Override
 	protected ChannelPipelineConfigurer defaultOnChannelInit() {
-		return ChannelPipelineConfigurer.emptyConfigurer();
+		return (channel, observer, remoteAddress) -> {
+			ProxyProvider proxyProvider = proxyProvider();
+			if (proxyProvider != null && proxyProvider.shouldProxy(remoteAddress)) {
+				proxyProvider.addProxyHandler(channel);
+			}
+		};
 	}
 
 	static final class TransportClientDoOn implements ConnectionObserver {
