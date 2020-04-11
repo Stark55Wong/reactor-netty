@@ -42,6 +42,11 @@ import javax.annotation.Nullable;
  */
 public abstract class TransportClientConfig<CONF extends TransportConfig> extends TransportConfig {
 
+	@Override
+	public int channelHash() {
+		return Objects.hash(super.channelHash(), doOnConnected, doOnDisconnected, proxyProvider, resolver);
+	}
+
 	/**
 	 * Return the {@link ConnectionProvider}
 	 *
