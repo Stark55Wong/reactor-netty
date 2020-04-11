@@ -15,10 +15,7 @@
  */
 package reactor.netty.http.server;
 
-import java.util.function.Function;
-
 import reactor.netty.http.HttpDecoderSpec;
-import reactor.netty.tcp.TcpServer;
 
 /**
  * A configuration builder to fine tune the {@link io.netty.handler.codec.http.HttpServerCodec}
@@ -37,17 +34,16 @@ public final class HttpRequestDecoderSpec extends HttpDecoderSpec<HttpRequestDec
 	}
 
 	/**
-	 * Build a {@link Function} that applies the http request decoder configuration to a
-	 * {@link TcpServer} by enriching its attributes.
+	 * Build a {@link HttpRequestDecoderSpec}.
 	 */
-	Function<TcpServer, TcpServer> build() {
+	HttpRequestDecoderSpec build() {
 		HttpRequestDecoderSpec decoder = new HttpRequestDecoderSpec();
 		decoder.initialBufferSize = initialBufferSize;
 		decoder.maxChunkSize = maxChunkSize;
 		decoder.maxHeaderSize = maxHeaderSize;
 		decoder.maxInitialLineLength = maxInitialLineLength;
 		decoder.validateHeaders = validateHeaders;
-		return tcp -> tcp.bootstrap(b -> HttpServerConfiguration.decoder(b, decoder));
+		return decoder;
 	}
 
 }

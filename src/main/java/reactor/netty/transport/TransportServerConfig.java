@@ -26,7 +26,6 @@ import io.netty.channel.ChannelOption;
 import io.netty.channel.EventLoopGroup;
 import io.netty.channel.group.ChannelGroup;
 import io.netty.util.AttributeKey;
-import reactor.netty.ChannelPipelineConfigurer;
 import reactor.netty.Connection;
 import reactor.netty.ConnectionObserver;
 import reactor.netty.DisposableServer;
@@ -183,11 +182,6 @@ public abstract class TransportServerConfig<CONF extends TransportConfig> extend
 			return ConnectionObserver.emptyListener();
 		}
 		return new TransportServerDoOn(doOnBound(), doOnUnbound());
-	}
-
-	@Override
-	protected ChannelPipelineConfigurer defaultOnChannelInit() {
-		return ChannelPipelineConfigurer.emptyConfigurer();
 	}
 
 	static final class TransportServerDoOn implements ConnectionObserver {
